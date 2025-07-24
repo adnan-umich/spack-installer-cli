@@ -6,6 +6,7 @@ import time
 import signal
 import subprocess
 import threading
+import shlex
 from datetime import datetime
 from typing import Optional
 from .database import get_db_manager
@@ -216,11 +217,12 @@ class InstallationWorker:
                 return
             
             # Build the spack spec command
-            spec_command = f"spack spec {package_name}"
+            quoted_pkg = self._quote_spack_package(package_name)
+            spec_command = f"spack spec {quoted_pkg}"
             full_command = f"source {spack_setup_script} && {spec_command}"
             
             # Log the command being executed
-            self._log_message(job_id, "INFO", f"Getting package specification: {spec_command}")
+            self._log_message(job_id, "INFO", f"Getting package specification: spack spec {package_name}")
             print(f"Running spack spec for {package_name}")
             
             # Run the spec command with streaming (but shorter timeout)
@@ -273,12 +275,15 @@ class InstallationWorker:
                     self._log_message(job_id, "ERROR", error_msg)
                     return False, error_msg
                 
-                spack_command = f"spack install {job['package_name']}"
+                quoted_pkg = self._quote_spack_package(job['package_name'])
+                spack_command = f"spack install {quoted_pkg}"
                 full_command = f"source {spack_setup_script} && {spack_command}"
             
             # Log the command being executed
-            self._log_message(job_id, "INFO", f"Executing command: {full_command}")
-            print(f"Executing: {full_command}")
+            # Log the user-friendly version (without quotes) for readability
+            log_command = full_command.replace(quoted_pkg, job['package_name'])
+            self._log_message(job_id, "INFO", f"Executing command: {log_command}")
+            print(f"Executing: {log_command}")
             
             # Run the command with real-time output streaming
             return self._run_command_with_streaming(job_id, full_command, job['estimated_time'])
@@ -427,6 +432,27 @@ class InstallationWorker:
             except Exception as e:
                 print(f"Heartbeat error: {e}")
                 time.sleep(config.WORKER_HEARTBEAT_INTERVAL)
+    
+    def _quote_spack_package(self, package_name: str) -> str:
+        """Properly quote a package name for use in spack commands.
+        
+        This ensures special characters like %, ~, ^, and @ are preserved when
+        the command is passed to the shell.
+        
+        Args:
+            package_name: The package name with potential special characters
+            
+        Returns:
+            A properly quoted string safe for shell execution
+        """
+        # Using single quotes is the most reliable way to preserve special characters in bash
+        # We need to escape any existing single quotes in the package name
+        if "'" in package_name:
+            # Replace ' with '\''
+            escaped_name = package_name.replace("'", "'\\''")
+            return f"'{escaped_name}'"
+        else:
+            return f"'{package_name}'"
 
 
 def start_worker(use_system_database: bool = True):

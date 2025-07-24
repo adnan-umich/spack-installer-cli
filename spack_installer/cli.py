@@ -101,7 +101,14 @@ def submit(package_name, priority, dependencies, estimated_time, spack_command, 
                 spack_command = f"source {spack_setup} && {spack_command}"
             else:
                 # User provided custom setup but not custom command
-                spack_command = f"source {spack_setup} && spack install {package_name}"
+                # Use single quotes to ensure special characters are preserved
+                if "'" in package_name:
+                    # Escape single quotes in the package name
+                    escaped_name = package_name.replace("'", "'\\''")
+                    quoted_pkg = f"'{escaped_name}'"
+                else:
+                    quoted_pkg = f"'{package_name}'"
+                spack_command = f"source {spack_setup} && spack install {quoted_pkg}"
         
         # Parse priority
         job_priority = JobPriority(priority.lower())
