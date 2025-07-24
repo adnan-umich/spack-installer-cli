@@ -30,6 +30,16 @@ class Config:
     USE_UNIX_SOCKET: bool = os.getenv("SPACK_INSTALLER_USE_UNIX_SOCKET", "true").lower() == "true"
     MULTI_USER_DATABASE_PATH: str = os.getenv("SPACK_INSTALLER_MULTI_USER_DB", "/tmp/jobs.json")
     
+    # Retry settings
+    DEFAULT_MAX_RETRIES: int = int(os.getenv("SPACK_INSTALLER_MAX_RETRIES", "3"))
+    RETRY_BACKOFF_FACTOR: float = float(os.getenv("SPACK_INSTALLER_RETRY_BACKOFF", "2.0"))
+    DEFAULT_RETRY_DELAY: float = float(os.getenv("SPACK_INSTALLER_RETRY_DELAY", "60.0"))  # seconds
+    RETRY_CHECK_INTERVAL: float = float(os.getenv("SPACK_INSTALLER_RETRY_CHECK_INTERVAL", "300.0"))  # 5 minutes
+    
+    # Legacy retry settings for compatibility
+    MAX_JOB_RETRIES: int = DEFAULT_MAX_RETRIES
+    RETRY_BASE_DELAY: float = DEFAULT_RETRY_DELAY
+    
     @classmethod
     def get_database_path(cls) -> str:
         """Get the path to the database file."""

@@ -340,6 +340,111 @@ def logs(job_id):
 
 
 @main.command()
+@click.argument("job_id", type=int)
+def retry(job_id):
+    """Retry a failed job with the same configuration."""
+    try:
+        # Get the original job
+        original_job = queue_manager.get_job(job_id)
+        if not original_job:
+            click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Job {job_id} not found.", err=True)
+            sys.exit(1)
+        
+        # Check if job is failed
+        if original_job['status'] != 'failed':
+            click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Job {job_id} is not failed (status: {original_job['status']}). Only failed jobs can be retried.", err=True)
+            sys.exit(1)
+        
+        # Check if job has retries remaining
+        if original_job['retry_count'] >= original_job['max_retries']:
+            click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Job {job_id} has exhausted all retry attempts ({original_job['retry_count']}/{original_job['max_retries']}).", err=True)
+            sys.exit(1)
+        
+        # Create retry job using the queue manager method
+        retry_job = queue_manager.create_retry_job(job_id)
+        
+        if not retry_job:
+            click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Failed to create retry job for job {job_id}.", err=True)
+            sys.exit(1)
+        
+        click.echo(f"{Fore.GREEN}✓{Style.RESET_ALL} Retry job created successfully!")
+        click.echo(f"New Job ID: {retry_job['id']}")
+        click.echo(f"Package: {retry_job['package_name']}")
+        click.echo(f"Retry attempt: {retry_job['retry_count']}/{retry_job['max_retries']}")
+        click.echo(f"Original job ID: {original_job['id']}")
+        click.echo(f"Priority: {retry_job['priority']}")
+        click.echo(f"Estimated time: {format_duration(retry_job['estimated_time'])}")
+        if retry_job['dependencies_list']:
+            click.echo(f"Dependencies: {', '.join(retry_job['dependencies_list'])}")
+        
+        # Show when the retry will be eligible to run
+        if retry_job.get('last_retry_at'):
+            from datetime import datetime, timedelta
+            next_eligible = retry_job['last_retry_at'] + timedelta(seconds=retry_job['retry_delay'])
+            current_time = datetime.utcnow()
+            if next_eligible > current_time:
+                wait_time = (next_eligible - current_time).total_seconds()
+                click.echo(f"Next retry eligible in: {format_duration(wait_time)}")
+            else:
+                click.echo(f"{Fore.GREEN}Job is eligible to run immediately{Style.RESET_ALL}")
+        
+    except Exception as e:
+        click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Error creating retry job: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command()
+def failed():
+    """Show all failed jobs and their retry status."""
+    try:
+        # Get all failed jobs
+        failed_jobs = queue_manager.get_all_jobs(JobStatus.FAILED)
+        
+        if not failed_jobs:
+            click.echo(f"\n{Fore.GREEN}No failed jobs found.{Style.RESET_ALL}")
+            return
+        
+        click.echo(f"\n{Fore.CYAN}=== Failed Jobs ==={Style.RESET_ALL}")
+        
+        headers = ["ID", "Package", "User", "Failed At", "Error", "Retries", "Can Retry"]
+        rows = []
+        
+        for job in failed_jobs:
+            # Truncate error message for display
+            error_msg = job.get('error_message', 'No error message')
+            if len(error_msg) > 50:
+                error_msg = error_msg[:47] + "..."
+            
+            # Check if job can be retried
+            can_retry = job['retry_count'] < job['max_retries']
+            retry_status = f"{job['retry_count']}/{job['max_retries']}"
+            can_retry_display = f"{Fore.GREEN}Yes{Style.RESET_ALL}" if can_retry else f"{Fore.RED}No{Style.RESET_ALL}"
+            
+            rows.append([
+                job['id'],
+                job['package_name'],
+                job['submitted_by'],
+                format_timestamp(job.get('completed_at')),
+                error_msg,
+                retry_status,
+                can_retry_display
+            ])
+        
+        click.echo(tabulate(rows, headers=headers, tablefmt="grid"))
+        
+        # Show retry instructions
+        retryable_jobs = [job for job in failed_jobs if job['retry_count'] < job['max_retries']]
+        if retryable_jobs:
+            click.echo(f"\n{Fore.CYAN}To retry a failed job, use:{Style.RESET_ALL}")
+            click.echo(f"  spack-installer retry <job-id>")
+            click.echo(f"\nExample: spack-installer retry {retryable_jobs[0]['id']}")
+        
+    except Exception as e:
+        click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Error getting failed jobs: {e}", err=True)
+        sys.exit(1)
+
+
+@main.command()
 def config_check():
     """Check spack configuration and system requirements."""
     try:

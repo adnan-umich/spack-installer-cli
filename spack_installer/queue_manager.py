@@ -150,6 +150,17 @@ class QueueManager:
             error_message=error_message
         )
     
+    def create_retry_job(self, original_job_id: int) -> Optional[Dict[str, Any]]:
+        """Create a retry job for a failed job.
+        
+        Args:
+            original_job_id: The ID of the original failed job
+            
+        Returns:
+            Dictionary of the new retry job, or None if retry not possible
+        """
+        return self.db.create_retry_job(original_job_id)
+    
     def cleanup_completed_jobs(self, keep_days: int = 7) -> int:
         """Clean up old completed/failed jobs."""
         return self.db.cleanup_old_jobs(keep_days)

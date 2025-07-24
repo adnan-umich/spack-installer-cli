@@ -161,6 +161,23 @@ class JSONDatabase:
                     job_copy['submitted_at'] = self._parse_datetime(job['submitted_at'])
                     job_copy['started_at'] = self._parse_datetime(job['started_at'])
                     job_copy['completed_at'] = self._parse_datetime(job['completed_at'])
+                    
+                    # Add retry fields for backward compatibility
+                    if 'retry_count' not in job_copy:
+                        job_copy['retry_count'] = 0
+                    if 'max_retries' not in job_copy:
+                        job_copy['max_retries'] = config.DEFAULT_MAX_RETRIES
+                    if 'last_retry_at' not in job_copy:
+                        job_copy['last_retry_at'] = None
+                    if 'retry_delay' not in job_copy:
+                        job_copy['retry_delay'] = config.DEFAULT_RETRY_DELAY
+                    if 'is_retry' not in job_copy:
+                        job_copy['is_retry'] = False
+                    if 'original_job_id' not in job_copy:
+                        job_copy['original_job_id'] = None
+                    else:
+                        job_copy['last_retry_at'] = self._parse_datetime(job['last_retry_at'])
+                    
                     return job_copy
             return None
     
@@ -174,6 +191,23 @@ class JSONDatabase:
                     job_copy['submitted_at'] = self._parse_datetime(job['submitted_at'])
                     job_copy['started_at'] = self._parse_datetime(job['started_at'])
                     job_copy['completed_at'] = self._parse_datetime(job['completed_at'])
+                    
+                    # Add retry fields for backward compatibility
+                    if 'retry_count' not in job_copy:
+                        job_copy['retry_count'] = 0
+                    if 'max_retries' not in job_copy:
+                        job_copy['max_retries'] = config.DEFAULT_MAX_RETRIES
+                    if 'last_retry_at' not in job_copy:
+                        job_copy['last_retry_at'] = None
+                    if 'retry_delay' not in job_copy:
+                        job_copy['retry_delay'] = config.DEFAULT_RETRY_DELAY
+                    if 'is_retry' not in job_copy:
+                        job_copy['is_retry'] = False
+                    if 'original_job_id' not in job_copy:
+                        job_copy['original_job_id'] = None
+                    else:
+                        job_copy['last_retry_at'] = self._parse_datetime(job['last_retry_at'])
+                    
                     jobs.append(job_copy)
             
             # Sort by submitted_at descending
@@ -304,6 +338,156 @@ class JSONDatabase:
             
             return deleted_count
     
+    def create_retry_job(self, original_job_id: int) -> Optional[Dict[str, Any]]:
+        """Create a retry job for a failed job.
+        
+        Args:
+            original_job_id: The ID of the original failed job
+            
+        Returns:
+            Dictionary of the new retry job, or None if retry not possible
+        """
+        with self._transaction() as data:
+            # Find the original job
+            original_job = None
+            for job in data["jobs"]:
+                if job["id"] == original_job_id:
+                    original_job = job
+                    break
+            
+            if not original_job:
+                return None
+            
+            # Check if job is eligible for retry
+            if original_job["status"] != JobStatus.FAILED.value:
+                return None
+            
+            # Add retry fields to existing jobs if they don't exist (backward compatibility)
+            if 'retry_count' not in original_job:
+                original_job['retry_count'] = 0
+            if 'max_retries' not in original_job:
+                original_job['max_retries'] = config.DEFAULT_MAX_RETRIES
+            if 'last_retry_at' not in original_job:
+                original_job['last_retry_at'] = None
+            if 'retry_delay' not in original_job:
+                original_job['retry_delay'] = config.DEFAULT_RETRY_DELAY
+            if 'is_retry' not in original_job:
+                original_job['is_retry'] = False
+            if 'original_job_id' not in original_job:
+                original_job['original_job_id'] = None
+            
+            # Check if we've exceeded max retries
+            if original_job["retry_count"] >= original_job["max_retries"]:
+                return None
+            
+            # Calculate retry delay with exponential backoff
+            retry_count = original_job["retry_count"] + 1
+            retry_delay = original_job["retry_delay"] * (config.RETRY_BACKOFF_FACTOR ** (retry_count - 1))
+            
+            # Create new retry job
+            job_id = data["next_job_id"]
+            data["next_job_id"] += 1
+            
+            retry_job = {
+                'id': job_id,
+                'package_name': original_job['package_name'],
+                'priority': original_job['priority'],
+                'status': JobStatus.PENDING.value,
+                'estimated_time': original_job['estimated_time'],
+                'actual_time': None,
+                'submitted_by': original_job['submitted_by'],
+                'submitted_at': datetime.utcnow(),
+                'started_at': None,
+                'completed_at': None,
+                'spack_command': original_job['spack_command'],
+                'error_message': None,
+                'dependencies_list': original_job.get('dependencies_list', []),
+                'resource_requirements_dict': original_job.get('resource_requirements_dict', {}),
+                'retry_count': retry_count,
+                'max_retries': original_job['max_retries'],
+                'last_retry_at': datetime.utcnow(),
+                'retry_delay': retry_delay,
+                'is_retry': True,
+                'original_job_id': original_job.get('original_job_id', original_job_id)
+            }
+            
+            data["jobs"].append(retry_job)
+            
+            # Update original job to increment retry count
+            original_job["retry_count"] = retry_count
+            original_job["last_retry_at"] = datetime.utcnow()
+            
+            # Add log entries
+            retry_log = {
+                'id': len(data["logs"]) + 1,
+                'job_id': job_id,
+                'timestamp': datetime.utcnow(),
+                'level': "INFO",
+                'message': f"Retry job created (attempt {retry_count}/{original_job['max_retries']}) for original job {original_job_id}"
+            }
+            data["logs"].append(retry_log)
+            
+            original_log = {
+                'id': len(data["logs"]) + 1,
+                'job_id': original_job_id,
+                'timestamp': datetime.utcnow(),
+                'level': "INFO",
+                'message': f"Retry attempt {retry_count} created as job {job_id}, next retry delay: {retry_delay:.1f}s"
+            }
+            data["logs"].append(original_log)
+            
+            # Return a copy with parsed datetimes
+            retry_job_copy = retry_job.copy()
+            retry_job_copy['submitted_at'] = retry_job['submitted_at']
+            retry_job_copy['last_retry_at'] = retry_job['last_retry_at']
+            
+            return retry_job_copy
+    
+    def get_jobs_eligible_for_retry(self) -> List[Dict[str, Any]]:
+        """Get failed jobs that are eligible for retry.
+        
+        Returns:
+            List of job dictionaries that can be retried
+        """
+        with self._transaction() as data:
+            eligible_jobs = []
+            current_time = datetime.utcnow()
+            
+            for job in data["jobs"]:
+                # Add retry fields if missing (backward compatibility)
+                if 'retry_count' not in job:
+                    job['retry_count'] = 0
+                if 'max_retries' not in job:
+                    job['max_retries'] = config.DEFAULT_MAX_RETRIES
+                if 'last_retry_at' not in job:
+                    job['last_retry_at'] = None
+                if 'retry_delay' not in job:
+                    job['retry_delay'] = config.DEFAULT_RETRY_DELAY
+                if 'is_retry' not in job:
+                    job['is_retry'] = False
+                if 'original_job_id' not in job:
+                    job['original_job_id'] = None
+                    
+                if (job["status"] == JobStatus.FAILED.value and 
+                    job["retry_count"] < job["max_retries"]):
+                    
+                    # Check if enough time has passed since last retry
+                    if job.get("last_retry_at"):
+                        last_retry = self._parse_datetime(job["last_retry_at"])
+                        if last_retry:
+                            time_since_retry = (current_time - last_retry).total_seconds()
+                            if time_since_retry < job["retry_delay"]:
+                                continue  # Not enough time has passed
+                    
+                    job_copy = job.copy()
+                    job_copy['submitted_at'] = self._parse_datetime(job['submitted_at'])
+                    job_copy['started_at'] = self._parse_datetime(job['started_at'])
+                    job_copy['completed_at'] = self._parse_datetime(job['completed_at'])
+                    job_copy['last_retry_at'] = self._parse_datetime(job['last_retry_at'])
+                    eligible_jobs.append(job_copy)
+            
+            return eligible_jobs
+
     def get_worker_status(self) -> Optional[Dict[str, Any]]:
         """Get worker status information."""
         with self._transaction() as data:
