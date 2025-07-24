@@ -1,4 +1,4 @@
-"""Worker daemon for executing installation jobs."""
+"""Multi-user worker daemon for executing installation jobs."""
 
 import os
 import sys
@@ -14,19 +14,30 @@ from .config import config
 
 
 class InstallationWorker:
-    """Worker daemon that executes installation jobs sequentially."""
+    """Multi-user worker daemon that executes installation jobs sequentially."""
     
-    def __init__(self, check_interval: float = None):
+    def __init__(self, check_interval: float = None, use_system_database: bool = True):
         """Initialize the worker.
         
         Args:
             check_interval: Seconds between queue checks (uses config default if None)
+            use_system_database: Whether to use system-wide database for multi-user support
         """
         self.check_interval = check_interval or config.WORKER_CHECK_INTERVAL
+        self.use_system_database = use_system_database
+        
+        # Use system database path for multi-user mode
+        if use_system_database:
+            # Override database path to use system-wide location
+            original_db_path = config.DATABASE_PATH
+            config.DATABASE_PATH = config.get_multi_user_database_path()
+            print(f"Worker using multi-user database: {config.DATABASE_PATH}")
+        
         self.queue_manager = QueueManager()
         self.db = get_db_manager()
         self.running = False
         self.current_job_id = None
+        self.current_job_user = None
         self.heartbeat_thread = None
         self._setup_signal_handlers()
     
@@ -42,7 +53,11 @@ class InstallationWorker:
     
     def start(self):
         """Start the worker daemon."""
-        print("Starting Spack installation worker...")
+        print("Starting Spack installation worker (multi-user mode)...")
+        
+        # Ensure system database directory exists and has proper permissions
+        if self.use_system_database:
+            self._ensure_system_database_setup()
         
         # Update worker status in database
         self._update_worker_status(True)
@@ -59,6 +74,37 @@ class InstallationWorker:
             print(f"Worker error: {e}")
         finally:
             self.stop()
+    
+    def _ensure_system_database_setup(self):
+        """Ensure the system database directory exists with proper permissions."""
+        db_path = config.get_multi_user_database_path()
+        db_dir = os.path.dirname(db_path)
+        
+        # Create directory if it doesn't exist
+        if not os.path.exists(db_dir):
+            try:
+                os.makedirs(db_dir, mode=0o755, exist_ok=True)
+                print(f"Created system database directory: {db_dir}")
+            except PermissionError:
+                print(f"Warning: Could not create system database directory: {db_dir}")
+                print("Please run 'sudo mkdir -p {db_dir}' and 'sudo chmod 755 {db_dir}'")
+        
+        # Check if database file exists and is writable
+        if os.path.exists(db_path):
+            if not os.access(db_path, os.W_OK):
+                print(f"Warning: Database file is not writable: {db_path}")
+        else:
+            # Try to create the database file
+            try:
+                # Touch the file to create it
+                with open(db_path, 'a'):
+                    pass
+                # Set permissions so all users can read/write
+                os.chmod(db_path, 0o666)
+                print(f"Created system database file: {db_path}")
+            except PermissionError:
+                print(f"Warning: Could not create database file: {db_path}")
+                print("Please ensure the worker has write permissions to the database directory")
     
     def stop(self):
         """Stop the worker daemon."""
@@ -89,15 +135,16 @@ class InstallationWorker:
     
     def _main_loop(self):
         """Main worker loop."""
-        print("Worker is running. Checking for jobs...")
+        print("Multi-user worker is running. Checking for jobs from all users...")
         
         while self.running:
             try:
-                # Get next job to execute
+                # Get next job to execute (from any user)
                 job = self.queue_manager.get_next_job_to_run()
                 
                 if job:
-                    print(f"Starting installation of {job['package_name']} (Job ID: {job['id']})")
+                    user = job.get('submitted_by', 'unknown')
+                    print(f"Starting installation of {job['package_name']} (Job ID: {job['id']}) for user: {user}")
                     self._execute_job(job)
                 else:
                     # No jobs available, wait before checking again
@@ -113,6 +160,7 @@ class InstallationWorker:
         """Execute a single installation job."""
         job_id = job['id']
         self.current_job_id = job_id
+        self.current_job_user = job.get('submitted_by', 'unknown')
         
         try:
             # Mark job as running
@@ -122,6 +170,9 @@ class InstallationWorker:
             
             # Update worker status with current job
             self._update_worker_status(True, job_id)
+            
+            # Log job start with user information
+            self._log_message(job_id, "INFO", f"Starting installation for user: {self.current_job_user}")
             
             # First, run spack spec to get package information
             self._run_spack_spec(job)
@@ -133,15 +184,18 @@ class InstallationWorker:
             self.queue_manager.mark_job_completed(job_id, success, error_message)
             
             if success:
-                print(f"Successfully installed {job['package_name']}")
+                print(f"Successfully installed {job['package_name']} for user {self.current_job_user}")
+                self._log_message(job_id, "INFO", f"Installation completed successfully for user: {self.current_job_user}")
             else:
-                print(f"Failed to install {job['package_name']}: {error_message}")
+                print(f"Failed to install {job['package_name']} for user {self.current_job_user}: {error_message}")
+                self._log_message(job_id, "ERROR", f"Installation failed for user {self.current_job_user}: {error_message}")
                 
         except Exception as e:
-            print(f"Error executing job {job_id}: {e}")
+            print(f"Error executing job {job_id} for user {self.current_job_user}: {e}")
             self.queue_manager.mark_job_completed(job_id, False, str(e))
         finally:
             self.current_job_id = None
+            self.current_job_user = None
             self._update_worker_status(True, None)
     
     def _run_spack_spec(self, job):
@@ -289,8 +343,8 @@ class InstallationWorker:
                         self._log_message(job_id, "INFO", f"INSTALL: {line_content}")
                         stdout_lines.append(line_content)
                         
-                        # Also print to console for immediate feedback
-                        print(f"[Job {job_id}] {line_content}")
+                        # Also print to console for immediate feedback with user context
+                        print(f"[Job {job_id}|{self.current_job_user}] {line_content}")
                 
                 # Check if process has finished
                 if process.poll() is not None:
@@ -301,7 +355,7 @@ class InstallationWorker:
                             if remaining_line.strip():
                                 self._log_message(job_id, "INFO", f"INSTALL: {remaining_line}")
                                 stdout_lines.append(remaining_line)
-                                print(f"[Job {job_id}] {remaining_line}")
+                                print(f"[Job {job_id}|{self.current_job_user}] {remaining_line}")
                     break
                 
                 # Small sleep to prevent excessive CPU usage
@@ -315,7 +369,7 @@ class InstallationWorker:
             
             if return_code == 0:
                 self._log_message(job_id, "INFO", "Installation completed successfully")
-                print(f"[Job {job_id}] Installation completed successfully")
+                print(f"[Job {job_id}|{self.current_job_user}] Installation completed successfully")
                 return True, None
             else:
                 error_msg = f"Command failed with exit code {return_code}"
@@ -349,7 +403,8 @@ class InstallationWorker:
         except Exception as e:
             # If database logging fails, at least print to console
             print(f"Failed to log message: {e}")
-            print(f"[{level}] Job {job_id}: {message}")
+            user_context = f"|{self.current_job_user}" if self.current_job_user else ""
+            print(f"[{level}] Job {job_id}{user_context}: {message}")
     
     def _update_worker_status(self, is_active: bool, current_job_id: Optional[int] = None):
         """Update worker status in the database."""
@@ -374,9 +429,13 @@ class InstallationWorker:
                 time.sleep(config.WORKER_HEARTBEAT_INTERVAL)
 
 
-def start_worker():
-    """Start the worker daemon."""
-    worker = InstallationWorker()
+def start_worker(use_system_database: bool = True):
+    """Start the worker daemon.
+    
+    Args:
+        use_system_database: Whether to use system-wide database for multi-user support
+    """
+    worker = InstallationWorker(use_system_database=use_system_database)
     
     # Check if another worker is already running
     if worker.is_running():
