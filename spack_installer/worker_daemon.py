@@ -62,8 +62,6 @@ def ensure_system_database():
         except PermissionError:
             print(f"Error: Cannot create system database directory: {db_dir}")
             print("Please run this script with appropriate permissions or manually create the directory:")
-            print(f"  sudo mkdir -p {db_dir}")
-            print(f"  sudo chmod 755 {db_dir}")
             sys.exit(1)
     
     # Ensure database file has proper permissions
