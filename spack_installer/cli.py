@@ -11,6 +11,7 @@ from .queue_manager import QueueManager
 from .models import JobPriority, JobStatus
 from .worker import start_worker, stop_worker, get_worker_status
 from .config import config
+from .auth import authenticate_user, get_current_user, REQUIRED_GROUP
 
 # Initialize colorama for cross-platform colored output
 init()
@@ -66,7 +67,56 @@ def format_status_string(status_str: str) -> str:
 @click.version_option(version="1.0.0")
 def main():
     """Spack Installer API - A queuing system for Spack package installations."""
-    pass
+    # Skip authentication check for the version command
+    ctx = click.get_current_context()
+    if ctx.invoked_subcommand == 'version':
+        return
+    
+    # Add special help command that doesn't require authentication
+    if ctx.invoked_subcommand == 'auth-status':
+        return
+        
+    # Authenticate the user before allowing any commands
+    if not authenticate_user():
+        sys.exit(1)
+
+
+@main.command()
+def auth_status():
+    """Check your authentication status."""
+    username = get_current_user()
+    click.echo(f"\n{Fore.CYAN}=== Authentication Status ==={Style.RESET_ALL}")
+    click.echo(f"Current user: {username}")
+    
+    # Check group membership
+    from .auth import user_in_group, user_has_db_access
+    is_in_group = user_in_group(REQUIRED_GROUP)
+    
+    if is_in_group:
+        click.echo(f"Group membership: {Fore.GREEN}✓{Style.RESET_ALL} User is a member of the required '{REQUIRED_GROUP}' group")
+    else:
+        click.echo(f"Group membership: {Fore.RED}✗{Style.RESET_ALL} User is NOT a member of the required '{REQUIRED_GROUP}' group")
+        click.echo(f"  → Contact your system administrator to be added to the '{REQUIRED_GROUP}' group")
+    
+    # Check database access
+    has_db_access = user_has_db_access()
+    db_path = config.get_multi_user_database_path()
+    
+    if has_db_access:
+        click.echo(f"Database access: {Fore.GREEN}✓{Style.RESET_ALL} User has read/write access to the database")
+    else:
+        click.echo(f"Database access: {Fore.RED}✗{Style.RESET_ALL} User does NOT have read/write access to the database:")
+        click.echo(f"  Path: {db_path}")
+        click.echo(f"  → Contact your system administrator to fix permissions")
+    
+    # Overall status
+    if is_in_group and has_db_access:
+        click.echo(f"\n{Fore.GREEN}Authentication status: PASSED{Style.RESET_ALL}")
+        click.echo("You are authorized to use all spack-installer commands.")
+    else:
+        click.echo(f"\n{Fore.RED}Authentication status: FAILED{Style.RESET_ALL}")
+        click.echo("You are NOT authorized to use spack-installer commands.")
+        click.echo("Please resolve the issues mentioned above.")
 
 
 @main.command()

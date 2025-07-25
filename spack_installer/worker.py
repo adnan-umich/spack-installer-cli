@@ -12,6 +12,7 @@ from typing import Optional
 from .database import get_db_manager
 from .queue_manager import QueueManager
 from .config import config
+from .auth import authenticate_user, REQUIRED_GROUP
 
 
 class InstallationWorker:
@@ -461,6 +462,11 @@ def start_worker(use_system_database: bool = True):
     Args:
         use_system_database: Whether to use system-wide database for multi-user support
     """
+    # First authenticate the user
+    if not authenticate_user():
+        print(f"Error: Only users in the '{REQUIRED_GROUP}' group with proper database access can start the worker.")
+        sys.exit(1)
+        
     worker = InstallationWorker(use_system_database=use_system_database)
     
     # Check if another worker is already running
@@ -473,6 +479,11 @@ def start_worker(use_system_database: bool = True):
 
 def stop_worker():
     """Stop the worker daemon."""
+    # First authenticate the user
+    if not authenticate_user():
+        print(f"Error: Only users in the '{REQUIRED_GROUP}' group with proper database access can stop the worker.")
+        sys.exit(1)
+        
     db = get_db_manager()
     worker_status = db.get_worker_status()
     
@@ -506,6 +517,9 @@ def stop_worker():
 
 def get_worker_status() -> dict:
     """Get current worker status."""
+    # Skip authentication for status checks
+    # This allows users to check if a worker is running without needing full access
+    
     db = get_db_manager()
     worker_status = db.get_worker_status()
     
