@@ -32,6 +32,7 @@ dependencies = [
 
 [project.scripts]
 spack-installer = "spack_installer.cli:main"
+si = "spack_installer.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/yourusername/spack-installer-cli"

@@ -10,6 +10,7 @@ A Python CLI application for managing Spack package installations with intellige
 - **Priority System**: Support for different priority levels
 - **Status Monitoring**: Track job progress and queue status
 - **Persistent Storage**: Jobs survive application restarts
+- **Unix Group-based Authentication**: Secures access to system-wide installations
 
 ## Installation
 
@@ -17,7 +18,29 @@ A Python CLI application for managing Spack package installations with intellige
 pip install -e .
 ```
 
+## Authentication
+
+For security reasons, spack-installer commands and the worker daemon require users to:
+
+1. Be a member of the `swinstaller` Unix group
+2. Have read/write access to the system database file
+
+You can check your authentication status with:
+
+```bash
+spack-installer auth-status
+```
+
+If you are not properly authenticated, you will need to:
+1. Ask your system administrator to add your user to the `swinstaller` group
+2. Ensure you have proper permissions on the system database directory
+
 ## Usage
+
+### Check Authentication Status
+```bash
+spack-installer auth-status
+```
 
 ### Check Configuration
 ```bash
