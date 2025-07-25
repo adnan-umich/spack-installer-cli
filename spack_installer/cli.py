@@ -129,8 +129,8 @@ def auth_status():
               help="Comma-separated list of dependencies")
 @click.option("--estimated-time", "-t",
               type=float,
-              default=300.0,
-              help="Estimated installation time in seconds (default: 300)")
+              default=7200.0,
+              help="Estimated installation time in seconds (default: 7200)")
 @click.option("--spack-command", "-c",
               help="Custom spack command to run (overrides default)")
 @click.option("--spack-setup", "-s",

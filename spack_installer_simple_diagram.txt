@@ -1,0 +1,73 @@
+//=========================================================================\\
+||                                                                         ||
+||                            SPACK INSTALLER                              ||
+||                                                                         ||
+\\=========================================================================//
+                                  |
+                                  |
+                                  v
+     +------------------------------------------------------------+
+     |                                                            |
+     |  +------------------+  +---------------+  +-------------+  |
+     |  | AUTHENTICATION   |  | USER COMMANDS |  | ADMIN CMDS  |  |
+     |  |------------------|  |---------------|  |-------------|  |
+     |  | - Unix Group     |  | - submit      |  | - worker    |  |
+     |  |   based access   |  | - status      |  |   start     |  |
+     |  | - Only members   |  | - cancel      |  | - worker    |  |
+     |  |   of swinstaller |  | - cleanup     |  |   stop      |  |
+     |  |   group can use  |  |               |  |             |  |
+     |  +------------------+  +---------------+  +-------------+  |
+     |                     COMMAND LAYER                          |
+     +------------------------------------------------------------+
+                                  |
+                                  v
+     +------------------------------------------------------------+
+     |                       CORE SERVICES                         |
+     |                                                            |
+     |  +------------------+       +------------------------+     |
+     |  | QUEUE MANAGEMENT |       | WORKER DAEMON         |     |
+     |  |------------------|       |------------------------|     |
+     |  | - Priority-based |<----->| - Sequential execution|     |
+     |  |   scheduling     |       | - Prevents conflicts  |     |
+     |  | - Dependency     |       | - Real-time status    |     |
+     |  |   resolution     |       | - Logging             |     |
+     |  | - Job tracking   |       | - Error handling      |     |
+     |  +------------------+       +------------------------+     |
+     |              ^                        ^                    |
+     |              |                        |                    |
+     |              v                        v                    |
+     |  +--------------------------------------------------+     |
+     |  |                   DATABASE                        |     |
+     |  |--------------------------------------------------|     |
+     |  | - Persists jobs, status, and configuration       |     |
+     |  | - Survives application restarts                  |     |
+     |  | - Tracks job history                             |     |
+     |  +--------------------------------------------------+     |
+     +------------------------------------------------------------+
+                                  |
+                                  v
+                    //=========================\\
+                    ||                         ||
+                    ||    SPACK PACKAGE        ||
+                    ||    MANAGEMENT SYSTEM    ||
+                    ||                         ||
+                    \\=========================//
+
+//=========================================================================\\
+||                                                                         ||
+||                        KEY BENEFITS:                                    ||
+||                                                                         ||
+||  1. PREVENTS CONFLICTS: No more broken installations from               ||
+||     simultaneous package installs                                       ||
+||                                                                         ||
+||  2. TEAM COORDINATION: Shared queue visible to all team members         ||
+||                                                                         ||
+||  3. INTELLIGENT SCHEDULING: Optimizes job order based on                ||
+||     dependencies, priorities, and estimated time                        ||
+||                                                                         ||
+||  4. SECURITY: Unix group-based authentication restricts                 ||
+||     who can install software                                            ||
+||                                                                         ||
+||  5. RELIABILITY: Failed jobs can be automatically retried               ||
+||                                                                         ||
+\\=========================================================================//

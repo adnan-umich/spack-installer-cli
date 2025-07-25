@@ -1,0 +1,54 @@
++----------------------------------------------------------------------+
+|                         SPACK INSTALLER                              |
++----------------------------------------------------------------------+
+                              |
+                              v
++-------------------+    +-----------------+    +--------------------+
+| USER 1            |--->| SPACK INSTALLER |<---| USER 2             |
+| submit package A  |    | QUEUE           |    | submit package B   |
++-------------------+    +-----------------+    +--------------------+
+                              |
+                              v
+                     +------------------+
+                     | AUTHENTICATION   |
+                     | Unix Group Check |
+                     | (swinstaller)    |
+                     +------------------+
+                              |
+                              v
+                   +----------------------+
+                   |   JOB SCHEDULER      |
+                   |                      |
+                   | 1. Priority-based    |
+                   | 2. Dependency-aware  |
+                   | 3. Resource-optimized|
+                   +----------------------+
+                              |
+                              v
+                 +-------------------------+
+                 |    WORKER DAEMON        |
+                 |                         |
+                 | - ONE installation      |
+                 |   at a time             |
+                 | - Prevents conflicts    |
+                 | - Timeout protection    |
+                 | - Error handling        |
+                 +-------------------------+
+                              |
+                              v
+                  +------------------------+
+                  |                        |
+                  |  SPACK PACKAGE MANAGER |
+                  |                        |
+                  +------------------------+
+                              |
+                              v
++----------------------------------------------------------------------+
+|                          RESULTS                                      |
+|                                                                       |
+| ✓ No broken installations from conflicting simultaneous installs      |
+| ✓ Coordinated team access to software installation                    |
+| ✓ Transparent queue management with status tracking                   |
+| ✓ Secure, authorized access only                                      |
+| ✓ Reproducible software environment                                   |
++----------------------------------------------------------------------+
