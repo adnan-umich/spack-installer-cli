@@ -177,7 +177,14 @@ class InstallationWorker:
             self._log_message(job_id, "INFO", f"Starting installation for user: {self.current_job_user}")
             
             # First, run spack spec to get package information
-            self._run_spack_spec(job)
+            spec_success, spec_error = self._run_spack_spec(job)
+            
+            if not spec_success:
+                # Spec failed, fail the entire job
+                print(f"Package specification failed for {job['package_name']} for user {self.current_job_user}: {spec_error}")
+                self._log_message(job_id, "ERROR", f"Package specification failed, aborting installation: {spec_error}")
+                self.queue_manager.mark_job_completed(job_id, False, f"Spec failed: {spec_error}")
+                return
             
             # Execute the installation
             success, error_message = self._run_spack_install(job)
@@ -200,11 +207,14 @@ class InstallationWorker:
             self.current_job_user = None
             self._update_worker_status(True, None)
     
-    def _run_spack_spec(self, job):
+    def _run_spack_spec(self, job) -> tuple[bool, Optional[str]]:
         """Run spack spec command to get package information and log it.
         
         Args:
             job: The installation job
+            
+        Returns:
+            Tuple of (success, error_message)
         """
         job_id = job['id']
         package_name = job['package_name']
@@ -214,8 +224,9 @@ class InstallationWorker:
             spack_setup_script = config.get_spack_setup_script()
             
             if not config.validate_spack_setup():
-                self._log_message(job_id, "WARNING", f"Spack setup script not found, skipping spec command: {spack_setup_script}")
-                return
+                error_msg = f"Spack setup script not found: {spack_setup_script}"
+                self._log_message(job_id, "ERROR", error_msg)
+                return False, error_msg
             
             # Build the spack spec command
             quoted_pkg = self._quote_spack_package(package_name)
@@ -231,11 +242,16 @@ class InstallationWorker:
             
             if success:
                 self._log_message(job_id, "INFO", "Package specification retrieved successfully")
+                return True, None
             else:
-                self._log_message(job_id, "WARNING", f"Spec command failed: {error_msg}, but continuing with installation")
+                error_msg = f"Spec command failed: {error_msg}"
+                self._log_message(job_id, "ERROR", error_msg)
+                return False, error_msg
                 
         except Exception as e:
-            self._log_message(job_id, "WARNING", f"Error running spec command: {str(e)}, continuing with installation")
+            error_msg = f"Error running spec command: {str(e)}"
+            self._log_message(job_id, "ERROR", error_msg)
+            return False, error_msg
     
     def _run_spack_install(self, job) -> tuple[bool, Optional[str]]:
         """Run the actual spack installation command with real-time logging.
