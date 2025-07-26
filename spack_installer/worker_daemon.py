@@ -123,6 +123,7 @@ class SpackJobHandler(socketserver.BaseRequestHandler):
             dependencies = params.get('dependencies', [])
             estimated_time = params.get('estimated_time', 7200.0)
             spack_command = params.get('spack_command')
+            submitted_by = params.get('submitted_by')  # Get the username from client
             
             if not package_name:
                 self._send_error("Missing package_name parameter")
@@ -135,13 +136,14 @@ class SpackJobHandler(socketserver.BaseRequestHandler):
                 self._send_error(f"Invalid priority: {priority}")
                 return
             
-            # Submit job
+            # Submit job with the provided username
             job_info = self.queue_manager.submit_job(
                 package_name=package_name,
                 priority=job_priority,
                 dependencies=dependencies,
                 estimated_time=estimated_time,
-                spack_command=spack_command
+                spack_command=spack_command,
+                submitted_by=submitted_by
             )
             
             self._send_response(job_info)

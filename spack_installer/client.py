@@ -131,11 +131,14 @@ class SpackInstallerClient:
         Returns:
             Dict containing job information
         """
+        import getpass
+        
         params = {
             'package_name': package_name,
             'priority': priority,
             'dependencies': dependencies or [],
-            'estimated_time': estimated_time
+            'estimated_time': estimated_time,
+            'submitted_by': getpass.getuser()  # Include the username of the client
         }
         if spack_command:
             params['spack_command'] = spack_command

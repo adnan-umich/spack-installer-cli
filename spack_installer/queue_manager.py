@@ -23,7 +23,8 @@ class QueueManager:
         dependencies: List[str] = None,
         estimated_time: float = 300.0,
         spack_command: str = None,
-        resource_requirements: Dict[str, Any] = None
+        resource_requirements: Dict[str, Any] = None,
+        submitted_by: str = None
     ) -> Dict[str, Any]:
         """Submit a new installation job to the queue.
         
@@ -34,15 +35,20 @@ class QueueManager:
             estimated_time: Estimated installation time in seconds
             spack_command: Custom spack command to run
             resource_requirements: Dict of resource requirements
+            submitted_by: Username of the person submitting the job (if None, uses current user)
             
         Returns:
             Dict with job information
         """
+        # Use provided username or fall back to current user
+        if submitted_by is None:
+            submitted_by = getpass.getuser()
+            
         return self.db.create_job(
             package_name=package_name,
             priority=priority,
             estimated_time=estimated_time,
-            submitted_by=getpass.getuser(),
+            submitted_by=submitted_by,
             spack_command=spack_command,
             dependencies=dependencies,
             resource_requirements=resource_requirements
