@@ -1,0 +1,25 @@
+[Unit]
+Description=Spack Installer Worker Daemon
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+User=spack
+Group=spack
+WorkingDirectory=/opt/spack-installer
+ExecStart=/usr/local/bin/spack-installer worker start --mode server --daemon --log-file /var/log/spack-installer/worker.log
+ExecStop=/usr/local/bin/spack-installer worker stop
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Security settings
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/spack-installer /var/lib/spack-installer
+
+[Install]
+WantedBy=multi-user.target

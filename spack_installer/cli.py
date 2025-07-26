@@ -30,11 +30,26 @@ def format_duration(seconds: float) -> str:
         return f"{seconds/3600:.1f}h"
 
 
-def format_timestamp(timestamp: datetime) -> str:
+def format_timestamp(timestamp) -> str:
     """Format timestamp in a readable way."""
     if not timestamp:
         return "N/A"
-    return timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Handle datetime objects
+    if isinstance(timestamp, datetime):
+        return timestamp.strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Handle ISO string timestamps from JSON
+    if isinstance(timestamp, str):
+        try:
+            # Parse ISO format string back to datetime
+            dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except (ValueError, AttributeError):
+            # If parsing fails, return the string as-is
+            return str(timestamp)
+    
+    return "N/A"
 
 
 def format_status(status: JobStatus) -> str:
@@ -160,24 +175,47 @@ def submit(package_name, priority, dependencies, estimated_time, spack_command, 
                     quoted_pkg = f"'{package_name}'"
                 spack_command = f"source {spack_setup} && spack install {quoted_pkg}"
         
-        # Parse priority
-        job_priority = JobPriority(priority.lower())
-        
         # Parse dependencies
         deps_list = []
         if dependencies:
             deps_list = [dep.strip() for dep in dependencies.split(",") if dep.strip()]
         
-        # Submit job
-        job_info = queue_manager.submit_job(
-            package_name=package_name,
-            priority=job_priority,
-            dependencies=deps_list,
-            estimated_time=estimated_time,
-            spack_command=spack_command
-        )
+        # Try to submit via socket server first
+        try:
+            from .client import SpackInstallerClient
+            client = SpackInstallerClient()
+            
+            if client.is_server_running():
+                # Submit job via socket server
+                job_info = client.submit_job(
+                    package_name=package_name,
+                    priority=priority,
+                    dependencies=deps_list,
+                    estimated_time=estimated_time,
+                    spack_command=spack_command
+                )
+                click.echo(f"{Fore.GREEN}✓{Style.RESET_ALL} Job submitted successfully to server!")
+            else:
+                raise ConnectionError("Server not running")
+                
+        except (ConnectionError, RuntimeError) as e:
+            # Fall back to direct database access
+            click.echo(f"{Fore.YELLOW}Server not available, using direct database access{Style.RESET_ALL}")
+            
+            # Parse priority
+            job_priority = JobPriority(priority.lower())
+            
+            # Submit job directly
+            job_info = queue_manager.submit_job(
+                package_name=package_name,
+                priority=job_priority,
+                dependencies=deps_list,
+                estimated_time=estimated_time,
+                spack_command=spack_command
+            )
+            click.echo(f"{Fore.GREEN}✓{Style.RESET_ALL} Job submitted successfully!")
         
-        click.echo(f"{Fore.GREEN}✓{Style.RESET_ALL} Job submitted successfully!")
+        # Display job information
         click.echo(f"Job ID: {job_info['id']}")
         click.echo(f"Package: {job_info['package_name']}")
         click.echo(f"Priority: {job_info['priority']}")
@@ -201,11 +239,41 @@ def submit(package_name, priority, dependencies, estimated_time, spack_command, 
 def status(status, verbose):
     """Show current queue status and job information."""
     try:
-        # Get queue status
-        queue_status = queue_manager.get_queue_status()
+        # Try to get status via socket server first
+        queue_status = None
+        jobs = None
+        server_used = False
+        
+        try:
+            from .client import SpackInstallerClient
+            client = SpackInstallerClient()
+            
+            if client.is_server_running():
+                # Get status via socket server
+                queue_status = client.get_status()
+                jobs = client.get_jobs(status)
+                server_used = True
+            else:
+                raise ConnectionError("Server not running")
+                
+        except (ConnectionError, RuntimeError):
+            # Fall back to direct database access
+            queue_status = queue_manager.get_queue_status()
+            
+            # Get jobs
+            if status:
+                filter_status = JobStatus(status)
+                jobs = queue_manager.get_all_jobs(filter_status)
+            else:
+                jobs = queue_manager.get_all_jobs()
         
         # Display queue summary
         click.echo(f"\n{Fore.CYAN}=== Queue Status ==={Style.RESET_ALL}")
+        if server_used:
+            click.echo(f"Mode: {Fore.GREEN}Server mode{Style.RESET_ALL}")
+        else:
+            click.echo(f"Mode: {Fore.YELLOW}Direct database access{Style.RESET_ALL}")
+            
         click.echo(f"Worker Active: {Fore.GREEN if queue_status['worker_active'] else Fore.RED}"
                   f"{'Yes' if queue_status['worker_active'] else 'No'}{Style.RESET_ALL}")
         
@@ -222,13 +290,6 @@ def status(status, verbose):
         click.echo(f"\n{Fore.CYAN}=== Job Counts ==={Style.RESET_ALL}")
         for job_status, count in queue_status['status_counts'].items():
             click.echo(f"{job_status.capitalize()}: {count}")
-        
-        # Get jobs
-        if status:
-            filter_status = JobStatus(status)
-            jobs = queue_manager.get_all_jobs(filter_status)
-        else:
-            jobs = queue_manager.get_all_jobs()
         
         if not jobs:
             click.echo(f"\n{Fore.YELLOW}No jobs found.{Style.RESET_ALL}")
@@ -283,11 +344,67 @@ def worker():
 
 
 @worker.command()
-def start():
-    """Start the worker daemon."""
+@click.option("--mode", type=click.Choice(["server", "legacy"]), 
+              default="server", help="Operating mode: server (default) or legacy")
+@click.option("--check-interval", type=float, 
+              help="Seconds between job queue checks")
+@click.option("--daemon", is_flag=True, 
+              help="Run as a daemon (detach from terminal)")
+@click.option("--log-file", type=str,
+              help="Path to log file (required when using --daemon)")
+def start(mode, check_interval, daemon, log_file):
+    """Start the worker daemon.
+    
+    Modes:
+    - server: Run socket server + worker that processes jobs
+    - legacy: Run in legacy mode (direct database access, no socket server)
+    
+    Use --daemon to run in the background and --log-file to specify where to write logs.
+    """
     try:
-        click.echo("Starting worker daemon...")
-        start_worker()
+        # Validate daemon options
+        if daemon and not log_file:
+            click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Error: --log-file is required when using --daemon", err=True)
+            sys.exit(1)
+        
+        # Configure check interval if provided
+        if check_interval:
+            config.WORKER_CHECK_INTERVAL = check_interval
+        
+        if mode == "server":
+            if not daemon:
+                click.echo("Starting worker server...")
+                click.echo(f"Socket type: {'Unix socket' if config.USE_UNIX_SOCKET else 'TCP'}")
+                if config.USE_UNIX_SOCKET:
+                    click.echo(f"Socket path: {config.SERVER_SOCKET_PATH}")
+                else:
+                    click.echo(f"Server address: {config.SERVER_HOST}:{config.SERVER_PORT}")
+            
+            # Import and start the worker daemon
+            from .worker_daemon import start_worker_server
+            
+            # Create args object for the daemon
+            class Args:
+                def __init__(self):
+                    self.check_interval = check_interval
+                    self.log_level = "INFO"
+                    self.log_file = log_file
+                    self.daemon = daemon
+            
+            if daemon:
+                click.echo(f"Starting worker server as daemon...")
+                if log_file:
+                    click.echo(f"Logs will be written to: {log_file}")
+            
+            start_worker_server(Args())
+            
+        elif mode == "legacy":
+            if daemon:
+                click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Error: --daemon is not supported in legacy mode", err=True)
+                sys.exit(1)
+            click.echo("Starting worker in legacy mode (direct database access)...")
+            start_worker()
+            
     except KeyboardInterrupt:
         click.echo(f"\n{Fore.YELLOW}Worker stopped by user.{Style.RESET_ALL}")
     except Exception as e:

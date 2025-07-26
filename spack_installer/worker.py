@@ -227,7 +227,7 @@ class InstallationWorker:
             print(f"Running spack spec for {package_name}")
             
             # Run the spec command with streaming (but shorter timeout)
-            success, error_msg = self._run_command_with_streaming(job_id, full_command, 60)
+            success, error_msg = self._run_command_with_streaming(job_id, full_command, 600)
             
             if success:
                 self._log_message(job_id, "INFO", "Package specification retrieved successfully")
