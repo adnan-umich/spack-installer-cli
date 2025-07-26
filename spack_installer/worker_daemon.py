@@ -282,9 +282,57 @@ def stop_socket_server():
     return True
 
 
+def daemonize():
+    """Properly daemonize the process."""
+    try:
+        # First fork
+        pid = os.fork()
+        if pid > 0:
+            # Exit parent process
+            sys.exit(0)
+    except OSError as e:
+        sys.stderr.write(f"Fork #1 failed: {e}\n")
+        sys.exit(1)
+    
+    # Decouple from parent environment
+    os.chdir("/")
+    os.setsid()
+    os.umask(0)
+    
+    # Second fork
+    try:
+        pid = os.fork()
+        if pid > 0:
+            # Exit parent process
+            sys.exit(0)
+    except OSError as e:
+        sys.stderr.write(f"Fork #2 failed: {e}\n")
+        sys.exit(1)
+    
+    # Redirect standard file descriptors
+    sys.stdout.flush()
+    sys.stderr.flush()
+    
+    # Redirect stdin, stdout, stderr to /dev/null
+    with open('/dev/null', 'r') as f:
+        os.dup2(f.fileno(), sys.stdin.fileno())
+    with open('/dev/null', 'w') as f:
+        os.dup2(f.fileno(), sys.stdout.fileno())
+        os.dup2(f.fileno(), sys.stderr.fileno())
+
+
 def start_worker_server(args=None):
     """Start the combined worker server (socket server + job processor)."""
     global _worker_instance
+    
+    # Daemonize if requested
+    if args and getattr(args, 'daemon', False):
+        daemonize()
+        # Setup logging again after daemonization
+        setup_logging(
+            log_level=getattr(args, 'log_level', 'INFO'),
+            log_file=getattr(args, 'log_file', None)
+        )
     
     logging.info("Starting Spack Installer Worker Server...")
     
@@ -411,6 +459,11 @@ def main():
         choices=["server", "worker"],
         default="server",
         help="Run mode: server (socket server + worker) or worker (worker only)"
+    )
+    parser.add_argument(
+        "--daemon",
+        action="store_true",
+        help="Run as a daemon (detach from terminal)"
     )
     parser.add_argument(
         "--validate-setup",

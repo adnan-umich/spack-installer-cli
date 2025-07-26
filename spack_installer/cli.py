@@ -348,25 +348,37 @@ def worker():
               default="server", help="Operating mode: server (default) or legacy")
 @click.option("--check-interval", type=float, 
               help="Seconds between job queue checks")
-def start(mode, check_interval):
+@click.option("--daemon", is_flag=True, 
+              help="Run as a daemon (detach from terminal)")
+@click.option("--log-file", type=str,
+              help="Path to log file (required when using --daemon)")
+def start(mode, check_interval, daemon, log_file):
     """Start the worker daemon.
     
     Modes:
     - server: Run socket server + worker that processes jobs
     - legacy: Run in legacy mode (direct database access, no socket server)
+    
+    Use --daemon to run in the background and --log-file to specify where to write logs.
     """
     try:
+        # Validate daemon options
+        if daemon and not log_file:
+            click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Error: --log-file is required when using --daemon", err=True)
+            sys.exit(1)
+        
         # Configure check interval if provided
         if check_interval:
             config.WORKER_CHECK_INTERVAL = check_interval
         
         if mode == "server":
-            click.echo("Starting worker server...")
-            click.echo(f"Socket type: {'Unix socket' if config.USE_UNIX_SOCKET else 'TCP'}")
-            if config.USE_UNIX_SOCKET:
-                click.echo(f"Socket path: {config.SERVER_SOCKET_PATH}")
-            else:
-                click.echo(f"Server address: {config.SERVER_HOST}:{config.SERVER_PORT}")
+            if not daemon:
+                click.echo("Starting worker server...")
+                click.echo(f"Socket type: {'Unix socket' if config.USE_UNIX_SOCKET else 'TCP'}")
+                if config.USE_UNIX_SOCKET:
+                    click.echo(f"Socket path: {config.SERVER_SOCKET_PATH}")
+                else:
+                    click.echo(f"Server address: {config.SERVER_HOST}:{config.SERVER_PORT}")
             
             # Import and start the worker daemon
             from .worker_daemon import start_worker_server
@@ -376,11 +388,20 @@ def start(mode, check_interval):
                 def __init__(self):
                     self.check_interval = check_interval
                     self.log_level = "INFO"
-                    self.log_file = None
+                    self.log_file = log_file
+                    self.daemon = daemon
+            
+            if daemon:
+                click.echo(f"Starting worker server as daemon...")
+                if log_file:
+                    click.echo(f"Logs will be written to: {log_file}")
             
             start_worker_server(Args())
             
         elif mode == "legacy":
+            if daemon:
+                click.echo(f"{Fore.RED}✗{Style.RESET_ALL} Error: --daemon is not supported in legacy mode", err=True)
+                sys.exit(1)
             click.echo("Starting worker in legacy mode (direct database access)...")
             start_worker()
             
